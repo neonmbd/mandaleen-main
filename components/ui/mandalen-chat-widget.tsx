@@ -3,13 +3,40 @@
 import type React from "react"
 import { useState, useRef, useEffect, useCallback, createContext, useContext } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { Send, MessageCircle, X, Minimize2, Maximize2, Bot, User, Sparkles, Sun, Moon } from "lucide-react"
+import { Send, MessageCircle, X, Minimize2, Maximize2, Bot, User, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
+
+// Add Tajawal font loading
+const loadTajawalFont = () => {
+  if (typeof document !== "undefined") {
+    const link = document.createElement("link")
+    link.href = "https://fonts.googleapis.com/css2?family=Tajawal:wght@200;300;400;500;700;800;900&display=swap"
+    link.rel = "stylesheet"
+    if (!document.querySelector(`link[href="${link.href}"]`)) {
+      document.head.appendChild(link)
+    }
+  }
+}
+
+// Load font when module loads
+if (typeof window !== "undefined") {
+  loadTajawalFont()
+}
+
+// Utility function to detect Arabic text
+const isArabicText = (text: string): boolean => {
+  const arabicRegex = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/
+  return arabicRegex.test(text)
+}
+
+// Get appropriate font family based on text content
+const getFontFamily = (text: string): string => {
+  return isArabicText(text) ? "'Tajawal', sans-serif" : "'Inter', sans-serif"
+}
 
 // Theme Context
 interface ThemeContextType {
   theme: "light" | "dark"
-  toggleTheme: () => void
   isRTL: boolean
   setIsRTL: (rtl: boolean) => void
 }
@@ -29,12 +56,35 @@ const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
   const [theme, setTheme] = useState<"light" | "dark">("light")
   const [isRTL, setIsRTL] = useState(false)
 
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === "light" ? "dark" : "light"))
-  }
-
   useEffect(() => {
-    // Auto-detect RTL based on document direction or language
+    // Auto-detect theme from document class
+    const updateTheme = () => {
+      const isDark = document.documentElement.classList.contains("dark")
+      setTheme(isDark ? "dark" : "light")
+    }
+
+    // Initial theme detection
+    updateTheme()
+
+    // Watch for theme changes
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === "attributes" && mutation.attributeName === "class") {
+          updateTheme()
+        }
+      })
+    })
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    })
+
+    return () => observer.disconnect()
+  }, [])
+
+  // Auto-detect RTL based on document direction or language
+  useEffect(() => {
     const htmlDir = document.documentElement.dir
     const htmlLang = document.documentElement.lang
     const rtlLanguages = ["ar", "he", "fa", "ur"]
@@ -49,7 +99,7 @@ const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     document.documentElement.setAttribute("data-theme", theme)
   }, [isRTL, theme])
 
-  return <ThemeContext.Provider value={{ theme, toggleTheme, isRTL, setIsRTL }}>{children}</ThemeContext.Provider>
+  return <ThemeContext.Provider value={{ theme, isRTL, setIsRTL }}>{children}</ThemeContext.Provider>
 }
 
 // Theme-aware color utilities
@@ -83,7 +133,6 @@ interface ChatWidgetProps {
   brandName?: string
   welcomeMessage?: string
   placeholder?: string
-  enableThemeToggle?: boolean
   enableRTLToggle?: boolean
 }
 
@@ -100,6 +149,110 @@ const useAutoResizeTextarea = (minHeight = 40, maxHeight = 120) => {
   }, [minHeight, maxHeight])
 
   return { textareaRef, adjustHeight }
+}
+
+// Markdown renderer component
+const MarkdownRenderer = ({ content, isRTL, colors }: { content: string; isRTL: boolean; colors: any }) => {
+  const renderMarkdown = (text: string) => {
+    // Split by lines to process each line
+    const lines = text.split("\n")
+    const elements: React.ReactNode[] = []
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      const fontFamily = getFontFamily(line)
+
+      // Skip empty lines but add spacing
+      if (line.trim() === "") {
+        elements.push(<div key={i} className="h-2" />)
+        continue
+      }
+
+      // Headers (###, ##, #)
+      if (line.startsWith("### ")) {
+        elements.push(
+          <h3 key={i} className="text-lg font-bold mb-2 mt-3 text-[#FF5C00]" style={{ fontFamily }}>
+            {line.replace("### ", "")}
+          </h3>,
+        )
+      } else if (line.startsWith("## ")) {
+        elements.push(
+          <h2 key={i} className="text-xl font-bold mb-2 mt-4 text-[#FF5C00]" style={{ fontFamily }}>
+            {line.replace("## ", "")}
+          </h2>,
+        )
+      } else if (line.startsWith("# ")) {
+        elements.push(
+          <h1 key={i} className="text-2xl font-bold mb-3 mt-4 text-[#FF5C00]" style={{ fontFamily }}>
+            {line.replace("# ", "")}
+          </h1>,
+        )
+      }
+      // Bullet points
+      else if (line.trim().startsWith("* ") || line.trim().startsWith("- ")) {
+        const bulletContent = line.trim().replace(/^[*-] /, "")
+        const processedContent = processBoldText(bulletContent)
+        elements.push(
+          <div
+            key={i}
+            className={cn("flex items-start gap-2 mb-1", isRTL && "flex-row-reverse")}
+            style={{ fontFamily }}
+          >
+            <span className="text-[#FF5C00] mt-1 text-sm">•</span>
+            <span className="flex-1">{processedContent}</span>
+          </div>,
+        )
+      }
+      // Numbered lists
+      else if (/^\d+\.\s/.test(line.trim())) {
+        const match = line.trim().match(/^(\d+)\.\s(.*)/)
+        if (match) {
+          const [, number, content] = match
+          const processedContent = processBoldText(content)
+          elements.push(
+            <div
+              key={i}
+              className={cn("flex items-start gap-2 mb-1", isRTL && "flex-row-reverse")}
+              style={{ fontFamily }}
+            >
+              <span className="text-[#FF5C00] mt-1 text-sm font-semibold">{number}.</span>
+              <span className="flex-1">{processedContent}</span>
+            </div>,
+          )
+        }
+      }
+      // Regular paragraphs
+      else {
+        const processedContent = processBoldText(line)
+        elements.push(
+          <p key={i} className="mb-2 leading-relaxed" style={{ fontFamily }}>
+            {processedContent}
+          </p>,
+        )
+      }
+    }
+
+    return elements
+  }
+
+  // Process bold text (**text**)
+  const processBoldText = (text: string): React.ReactNode => {
+    const parts = text.split(/(\*\*.*?\*\*)/)
+    return parts.map((part, index) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        const boldText = part.slice(2, -2)
+        const fontFamily = getFontFamily(boldText)
+        return (
+          <strong key={index} className="font-bold text-[#FF5C00]" style={{ fontFamily }}>
+            {boldText}
+          </strong>
+        )
+      }
+      return part
+    })
+  }
+
+  return <div className="space-y-1">{renderMarkdown(content)}</div>
 }
 
 const TypingIndicator = () => {
@@ -139,6 +292,7 @@ const TypingIndicator = () => {
 const ChatBubble = ({ message, isUser }: { message: Message; isUser: boolean }) => {
   const { theme, isRTL } = useTheme()
   const colors = getThemeColors(theme)
+  const fontFamily = getFontFamily(message.content)
 
   // Adjust bubble alignment for RTL
   const bubbleAlignment = isRTL ? !isUser : isUser
@@ -174,9 +328,16 @@ const ChatBubble = ({ message, isUser }: { message: Message; isUser: boolean }) 
         whileHover={{ scale: 1.02 }}
         transition={{ type: "spring", stiffness: 400, damping: 25 }}
         dir={isRTL ? "rtl" : "ltr"}
+        style={{ fontFamily }}
       >
-        <p className="font-medium">{message.content}</p>
-        <div className={cn("text-xs mt-1 opacity-70", isUser ? "text-white/80" : colors.textMuted)}>
+        <div className="font-medium">
+          {isUser ? (
+            <p>{message.content}</p>
+          ) : (
+            <MarkdownRenderer content={message.content} isRTL={isRTL} colors={colors} />
+          )}
+        </div>
+        <div className={cn("text-xs mt-2 opacity-70", isUser ? "text-white/80" : colors.textMuted)}>
           {message.timestamp.toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -195,10 +356,9 @@ const ChatWidget = ({
   brandName = "Mandaleen",
   welcomeMessage = "Hi! I'm your AI assistant. How can I help you today?",
   placeholder = "Type your message...",
-  enableThemeToggle = true,
   enableRTLToggle = true,
 }: ChatWidgetProps) => {
-  const { theme, toggleTheme, isRTL, setIsRTL } = useTheme()
+  const { theme, isRTL, setIsRTL } = useTheme()
   const colors = getThemeColors(theme)
   const [internalIsOpen, setInternalIsOpen] = useState(false)
   const [isMinimized, setIsMinimized] = useState(false)
@@ -241,7 +401,7 @@ const ChatWidget = ({
     try {
       console.log("Sending to webhook:", { sessionId, userMessage, brandName })
 
-      const response = await fetch("https://rd4frqju.rpcld.com/webhook-test/mandaleen", {
+      const response = await fetch("https://rd4frqju.rpcld.com/webhook/mandaleen", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -469,31 +629,24 @@ const ChatWidget = ({
                     <Sparkles className="w-5 h-5 text-white" />
                   </div>
                   <div className={isRTL ? "text-right" : "text-left"}>
-                    <h3 className="font-semibold text-white text-sm">
+                    <h3
+                      className="font-semibold text-white text-sm"
+                      style={{ fontFamily: getFontFamily(isRTL ? `${brandName} الذكي` : `${brandName} AI`) }}
+                    >
                       {isRTL ? `${brandName} الذكي` : `${brandName} AI`}
                     </h3>
                     <div className={cn("flex items-center gap-1", isRTL && "flex-row-reverse")}>
                       <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                      <span className="text-xs text-white/80">{isRTL ? "متصل" : "Online"}</span>
+                      <span
+                        className="text-xs text-white/80"
+                        style={{ fontFamily: getFontFamily(isRTL ? "متصل" : "Online") }}
+                      >
+                        {isRTL ? "متصل" : "Online"}
+                      </span>
                     </div>
                   </div>
                 </div>
                 <div className={cn("flex items-center gap-2", isRTL && "flex-row-reverse")}>
-                  {enableThemeToggle && (
-                    <motion.button
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.9 }}
-                      onClick={toggleTheme}
-                      className="p-1.5 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
-                      title={isRTL ? "تبديل المظهر" : "Toggle theme"}
-                    >
-                      {theme === "light" ? (
-                        <Moon className="w-4 h-4 text-white" />
-                      ) : (
-                        <Sun className="w-4 h-4 text-white" />
-                      )}
-                    </motion.button>
-                  )}
                   {enableRTLToggle && (
                     <motion.button
                       whileHover={{ scale: 1.1 }}
@@ -505,18 +658,7 @@ const ChatWidget = ({
                       {isRTL ? "EN" : "ع"}
                     </motion.button>
                   )}
-                  <motion.button
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.9 }}
-                    onClick={() => setIsMinimized(!isMinimized)}
-                    className="p-1.5 rounded-lg bg-white/20 hover:bg-white/30 transition-colors"
-                  >
-                    {isMinimized ? (
-                      <Maximize2 className="w-4 h-4 text-white" />
-                    ) : (
-                      <Minimize2 className="w-4 h-4 text-white" />
-                    )}
-                  </motion.button>
+                  
                   <motion.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
@@ -635,10 +777,9 @@ export default function MandalenChatWidget() {
         isOpen={isOpen}
         onToggle={setIsOpen}
         brandName="Mandaleen"
-        welcomeMessage="Hello! Welcome to Mandaleen. I'm your AI assistant and I'm here to help you with any questions you might have. How can I assist you today?"
+        welcomeMessage="Hello! 👋 I'm Mandaleen 🟠, how can I assist you today?"
         placeholder="Ask me anything..."
         position="bottom-right"
-        enableThemeToggle={true}
         enableRTLToggle={true}
       />
     </ThemeProvider>
